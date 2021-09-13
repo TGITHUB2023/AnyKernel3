@@ -1,0 +1,110 @@
+#!/sbin/sh
+
+set -e
+
+ZIPFILE="$3"
+ZIPNAME="${ZIPFILE##*/}"
+OUTFD="/proc/self/fd/$2"
+
+tmpdir='/tmp'
+execdir='/tmp'
+
+BOOTMODE=false
+if ps | grep zygote | grep -qv grep; then
+    BOOTMODE=true
+fi
+if ps -A 2>/dev/null | grep zygote | grep -qv grep; then
+    BOOTMODE=true
+fi
+
+if $BOOTMODE; then
+    if [ -n "$TMPDIR" -a -d "$TMPDIR" ]; then
+        tmpdir="$TMPDIR"
+    elif [ -d '/data/local/tmp' ]; then
+        tmpdir='/data/local/tmp'
+    fi
+    if [ -d '/data/adb' ]; then
+        execdir='/data/adb'
+    fi
+fi
+
+ui_print() {
+    if $BOOTMODE; then
+        echo "$1"
+    else
+        echo -e "ui_print $1\nui_print" >> $OUTFD
+    fi
+}
+show_progress() {
+    if ! $BOOTMODE; then
+        echo "progress $1 $2" >> $OUTFD
+    fi
+}
+set_progress() {
+    if ! $BOOTMODE; then
+        echo "set_progress $1" >> $OUTFD
+    fi
+}
+flash() {
+    dd if="$1" of="$2" &>/dev/null
+    rm -f "$1"
+}
+abort() {
+    ui_print "$1"
+    exit 1
+}
+
+ui_print " "
+ui_print "*****************************************************"
+ui_print "***          Sploitpay Kernel Installer           ***"
+ui_print "***     For Samsung Galaxy Note10  N975F d2s      ***"
+ui_print "***               sploitpay.tk                    ***"
+ui_print "*****************************************************"
+ui_print " "
+
+show_progress 1 0
+set_progress 0.1
+MODEL=$(getprop ro.boot.em.model | cut -d '-' -f 2)
+
+case "$MODEL" in
+N975F) MODEL_DTB=exynos9825;;
+*) abort "Error: Unknown model $MODEL. This package is only for N975F devices, aborting..."
+esac
+set_progress 0.2
+
+ui_print "Extracting Tools"
+trap "rm -f unxz '$execdir/unxz' clone_header '$execdir/clone_header' images.tar images.tar.xz dtb-$MODEL_DTB.img dtbo-$MODEL.img " EXIT
+unzip -o -q "$ZIPFILE" unxz clone_header N975F.img dtbo-N975F.img dtb-exynos9825.img
+mv -f unxz clone_header "$execdir"
+chmod +x "$execdir/unxz" "$execdir/clone_header"
+set_progress 0.3
+
+ui_print "Cloning os_patch_level from current kernel..."
+if ! "$execdir/clone_header" /dev/block/by-name/boot $MODEL.img; then
+    ui_print " * Error cloning os_patch_level, images are"
+    ui_print " * incompatible. Default date will be used."
+fi
+rm -f "$execdir/clone_header"
+rm -f "$execdir/unxz"
+set_progress 0.4
+
+ui_print "Flashing SM-$MODEL BOOT..."
+flash $MODEL.img /dev/block/by-name/boot
+set_progress 0.5
+
+ui_print "Flashing $MODEL_DTB DTB..."
+flash dtb-$MODEL_DTB.img /dev/block/by-name/dtb
+set_progress 0.6
+
+ui_print "Flashing SM-$MODEL DTBO..."
+flash dtbo-$MODEL.img /dev/block/by-name/dtbo
+set_progress 0.7
+
+trap - EXIT
+
+ui_print " "
+ui_print "*****************************************************"
+ui_print "***          Sploitpay-v1 Kernel Installed        ***"
+ui_print "*****************************************************"
+ui_print " "
+set_progress 1
